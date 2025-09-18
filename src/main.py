@@ -14,6 +14,9 @@ import numpy as np
 # 导入认证模块
 from auth import check_authentication, show_auth_page, show_user_info, init_auth_database
 
+# 导入图片预览模块
+from image_preview import show_image_preview_interface
+
 # 初始化变量，确保在任何情况下都有定义
 o3d = None
 OPEN3D_AVAILABLE = False
@@ -710,15 +713,9 @@ def show_visualization_page():
             # 显示图像数据
             if image_files:
                 st.subheader("🖼️ 图像数据")
-                cols = st.columns(3)
-                for i, img_path in enumerate(image_files[:9]):  # 最多显示9张
-                    with cols[i % 3]:
-                        if os.path.exists(img_path):
-                            try:
-                                image = Image.open(img_path)
-                                st.image(image, caption=os.path.basename(img_path), use_column_width=True)
-                            except Exception as e:
-                                st.error(f"无法显示图像: {e}")
+                
+                # 使用新的图片预览界面
+                show_image_preview_interface(image_files)
             
             # 显示CSV数据
             if csv_files:
