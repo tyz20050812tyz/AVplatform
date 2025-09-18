@@ -50,6 +50,13 @@ try:
 except ImportError:
     ONLINE_USERS_AVAILABLE = False
 
+# 导入IP获取工具
+try:
+    from ip_utils import get_best_guess_client_ip
+except ImportError:
+    def get_best_guess_client_ip():
+        return '127.0.0.1'
+
 # 配置常量
 SESSION_TIMEOUT_HOURS = 24  # 会话超时时间（小时）
 MIN_PASSWORD_LENGTH = 6  # 最小密码长度
@@ -462,9 +469,13 @@ def show_login_page():
                     # 记录用户上线
                     if ONLINE_USERS_AVAILABLE and add_user_online:
                         try:
+                            # 获取客户端IP地址
+                            client_ip = get_best_guess_client_ip()
+                            
                             add_user_online(
                                 session_id=session_token,
                                 username=user['username'],
+                                ip_address=client_ip,
                                 page_path='/login'
                             )
                         except Exception as e:
