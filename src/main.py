@@ -14,39 +14,86 @@ import numpy as np
 # 导入认证模块
 from auth import check_authentication, show_auth_page, show_user_info, init_auth_database
 
+# 初始化变量，确保在任何情况下都有定义
+o3d = None
+OPEN3D_AVAILABLE = False
+
 try:
     import open3d as o3d
+    # 测试基本功能是否可用
+    test_pcd = o3d.geometry.PointCloud()
     OPEN3D_AVAILABLE = True
-except ImportError:
+    print("✅ Open3D imported successfully")
+except ImportError as e:
+    o3d = None
     OPEN3D_AVAILABLE = False
-    st.warning("⚠️ Open3D库未安装，点云可视化功能将受限。请运行: pip install open3d")
+    print(f"⚠️ Open3D库未安装: {e}")
+    st.warning("⚠️ Open3D库未安装，点云可视化功能将受限。请参考安装说明。")
+except Exception as e:
+    o3d = None
+    OPEN3D_AVAILABLE = False
+    print(f"⚠️ Open3D库导入失败: {e}")
+    st.warning(f"⚠️ Open3D库导入失败: {e}。建议使用Python 3.11或3.12版本。")
+
+# 初始化laspy变量
+laspy = None
+LASPY_AVAILABLE = False
 
 try:
     import laspy
     LASPY_AVAILABLE = True
 except ImportError:
+    laspy = None
     LASPY_AVAILABLE = False
 
 def load_point_cloud(file_path):
     """加载点云数据"""
     try:
+        # 添加调试信息
+        st.write(f"🔍 **调试信息**: 正在加载文件 {file_path}")
+        st.write(f"🔍 **文件存在**: {os.path.exists(file_path)}")
+        
+        if not os.path.exists(file_path):
+            st.error(f"🚫 文件不存在: {file_path}")
+            return None, None
+            
         if file_path.endswith('.pcd'):
-            if OPEN3D_AVAILABLE:
+            if OPEN3D_AVAILABLE and o3d is not None:
+                st.write(f"🔍 **Open3D状态**: 可用")
                 pcd = o3d.io.read_point_cloud(file_path)
+                
+                # 检查点云是否为空
+                if len(pcd.points) == 0:
+                    st.error("🚫 PCD文件中没有点云数据")
+                    return None, None
+                    
                 points = np.asarray(pcd.points)
                 colors = np.asarray(pcd.colors) if pcd.has_colors() else None
+                
+                # 添加详细调试信息
+                st.write(f"🔍 **加载结果**: 点数={len(points):,}, 有颜色={colors is not None}")
+                if colors is not None:
+                    st.write(f"🔍 **颜色范围**: R[{colors[:, 0].min():.3f}, {colors[:, 0].max():.3f}], G[{colors[:, 1].min():.3f}, {colors[:, 1].max():.3f}], B[{colors[:, 2].min():.3f}, {colors[:, 2].max():.3f}]")
+                
                 return points, colors
             else:
                 st.error("🚫 需要安装 Open3D 库来读取 PCD 文件")
                 return None, None
         
         elif file_path.endswith('.las') or file_path.endswith('.laz'):
-            if LASPY_AVAILABLE:
+            if LASPY_AVAILABLE and laspy is not None:
                 las_file = laspy.read(file_path)
-                points = np.vstack([las_file.x, las_file.y, las_file.z]).T
+                # 将坐标数据转换为numpy数组
+                x_coords = np.array(las_file.x)  # type: ignore
+                y_coords = np.array(las_file.y)  # type: ignore
+                z_coords = np.array(las_file.z)  # type: ignore
+                points = np.column_stack([x_coords, y_coords, z_coords])
                 colors = None
                 if hasattr(las_file, 'red') and hasattr(las_file, 'green') and hasattr(las_file, 'blue'):
-                    colors = np.vstack([las_file.red, las_file.green, las_file.blue]).T / 65535.0
+                    red_vals = np.array(las_file.red)  # type: ignore
+                    green_vals = np.array(las_file.green)  # type: ignore
+                    blue_vals = np.array(las_file.blue)  # type: ignore
+                    colors = np.column_stack([red_vals, green_vals, blue_vals]) / 65535.0
                 return points, colors
             else:
                 st.error("🚫 需要安装 laspy 库来读取 LAS/LAZ 文件")
@@ -69,17 +116,23 @@ def load_point_cloud(file_path):
     
     except Exception as e:
         st.error(f"🚫 加载点云文件失败: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return None, None
 
 def visualize_single_pointcloud(file_path):
     """单个点云文件可视化"""
     st.write(f"📄 **文件**: {os.path.basename(file_path)}")
+    st.write(f"📁 **完整路径**: {file_path}")
     
     with st.spinner("🔄 正在加载点云数据..."):
         points, colors = load_point_cloud(file_path)
     
     if points is None:
+        st.error("⚠️ 点云数据加载失败，无法进行可视化")
         return
+    
+    st.success(f"✅ 点云数据加载成功！共 {len(points):,} 个点")
     
     # 显示点云统计信息
     col1, col2, col3, col4 = st.columns(4)
@@ -120,43 +173,65 @@ def visualize_single_pointcloud(file_path):
         )
     
     # 采样点云数据
+    st.write(f"🔍 **采样信息**: 原始点数={len(points):,}, 目标点数={max_points:,}")
+    
     if len(points) > max_points:
         indices = np.random.choice(len(points), max_points, replace=False)
         sampled_points = points[indices]
         sampled_colors = colors[indices] if colors is not None else None
+        st.write(f"⚙️ 已采样到 {len(sampled_points):,} 个点")
     else:
         sampled_points = points
         sampled_colors = colors
+        st.write(f"⚙️ 使用全部 {len(sampled_points):,} 个点")
     
     # 准备颜色数据
+    st.write(f"🔍 **颜色处理**: 选择模式={color_mode}, 有原始颜色={sampled_colors is not None}")
+    
     if color_mode == "高度 (Z)":
         color_values = sampled_points[:, 2]
         colorscale = 'Viridis'
+        st.write("🎨 使用Z轴高度作为颜色")
     elif color_mode == "原始颜色" and sampled_colors is not None:
+        # 确保颜色值在正确范围内
+        normalized_colors = np.clip(sampled_colors, 0, 1)
         color_values = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' 
-                       for r, g, b in sampled_colors]
+                       for r, g, b in normalized_colors]
         colorscale = None
+        st.write(f"🎨 使用原始颜色，颜色范围: R[{normalized_colors[:, 0].min():.3f}, {normalized_colors[:, 0].max():.3f}]")
     else:
         color_values = 'blue'
         colorscale = None
+        st.write("🎨 使用均匀蓝色")
     
     # 创建 3D 散点图
-    fig = go.Figure(data=[go.Scatter3d(
-        x=sampled_points[:, 0],
-        y=sampled_points[:, 1],
-        z=sampled_points[:, 2],
-        mode='markers',
-        marker=dict(
-            size=point_size,
-            color=color_values,
-            colorscale=colorscale,
-            opacity=0.8,
-            colorbar=dict(title="高度") if color_mode == "高度 (Z)" else None
-        ),
-        text=[f'X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}' 
-              for x, y, z in sampled_points[:100]],  # 只为前100个点添加悬停信息
-        hovertemplate='%{text}<extra></extra>'
-    )])
+    st.write("🔍 **正在创建3D散点图...**")
+    
+    try:
+        fig = go.Figure(data=[go.Scatter3d(
+            x=sampled_points[:, 0],
+            y=sampled_points[:, 1],
+            z=sampled_points[:, 2],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color=color_values,
+                colorscale=colorscale,
+                opacity=0.8,
+                colorbar=dict(title="高度") if color_mode == "高度 (Z)" else None
+            ),
+            text=[f'X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}' 
+                  for x, y, z in sampled_points[:100]],  # 只为前100个点添加悬停信息
+            hovertemplate='%{text}<extra></extra>'
+        )])
+        
+        st.write("✅ 3D散点图创建成功")
+        
+    except Exception as e:
+        st.error(f"⚠️ 创建3D散点图失败: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return
     
     # 设置布局
     camera_settings = {
@@ -166,20 +241,39 @@ def visualize_single_pointcloud(file_path):
         "从左向右 (YZ)": dict(eye=dict(x=3, y=0, z=0))
     }
     
-    fig.update_layout(
-        title=f'🌌 点云可视化: {os.path.basename(file_path)}',
-        scene=dict(
-            xaxis_title='X',
-            yaxis_title='Y',
-            zaxis_title='Z',
-            camera=camera_settings.get(view_mode, camera_settings["三维视角"]),
-            aspectmode='cube'
-        ),
-        height=600,
-        margin=dict(r=0, b=0, l=0, t=40)
-    )
+    # 安全获取camera设置，确保键存在
+    default_camera = camera_settings["3D 视角"]
+    # 确保view_mode不为None，如果为None则使用默认值
+    view_mode_safe = view_mode if view_mode is not None else "3D 视角"
+    selected_camera = camera_settings.get(view_mode_safe, default_camera)
     
-    st.plotly_chart(fig, use_container_width=True)
+    try:
+        fig.update_layout(
+            title=f'🌌 点云可视化: {os.path.basename(file_path)}',
+            scene=dict(
+                xaxis_title='X',
+                yaxis_title='Y',
+                zaxis_title='Z',
+                camera=selected_camera,
+                aspectmode='cube'
+            ),
+            height=600,
+            margin=dict(r=0, b=0, l=0, t=40)
+        )
+        
+        st.write("✅ 布局设置成功")
+        
+        # 显示图表
+        st.write("🔍 **正在渲染可视化图表...**")
+        # st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, height=800, config={'staticPlot': False})
+        st.success("✨ 点云可视化完成！")
+        
+    except Exception as e:
+        st.error(f"⚠️ 布局设置或渲染失败: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return
     
     # 显示详细统计信息
     with st.expander("📊 详细统计信息"):
@@ -680,10 +774,24 @@ def show_visualization_page():
             if pcd_files:
                 st.subheader("📡 点云数据")
                 
+                # 检查PCD文件是否实际存在
+                valid_pcd_files = []
+                for pcd_file in pcd_files:
+                    if os.path.exists(pcd_file):
+                        valid_pcd_files.append(pcd_file)
+                        st.write(f"✅ 找到PCD文件: {os.path.basename(pcd_file)} ({os.path.getsize(pcd_file):,} bytes)")
+                    else:
+                        st.write(f"❌ PCD文件不存在: {os.path.basename(pcd_file)}")
+                
+                if not valid_pcd_files:
+                    st.error("⚠️ 没有找到有效的PCD文件")
+                    return
+                
                 # 可视化模式选择
-                if len(pcd_files) == 1:
+                if len(valid_pcd_files) == 1:
                     # 单个文件直接可视化
-                    visualize_single_pointcloud(pcd_files[0])
+                    st.write("🎯 自动选择单个PCD文件进行可视化")
+                    visualize_single_pointcloud(valid_pcd_files[0])
                 else:
                     # 多个文件提供选择
                     viz_mode = st.radio(
@@ -697,15 +805,15 @@ def show_visualization_page():
                         # 选择单个文件进行详细可视化
                         selected_pcd = st.selectbox(
                             "📁 选择点云文件",
-                            pcd_files,
-                            format_func=lambda x: os.path.basename(x),
+                            valid_pcd_files,
+                            format_func=lambda x: f"{os.path.basename(x)} ({os.path.getsize(x):,} bytes)",
                             key=f"pcd_select_{selected_dataset}"
                         )
                         if selected_pcd:
                             visualize_single_pointcloud(selected_pcd)
                     else:
                         # 多文件对比可视化
-                        visualize_multiple_pointclouds(pcd_files)
+                        visualize_multiple_pointclouds(valid_pcd_files)
             
             if bag_files:
                 st.subheader("🎒 ROS Bag文件")

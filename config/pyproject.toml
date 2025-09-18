@@ -3,4 +3,17 @@ include = ["**/*.py"]
 exclude = ["**/node_modules", "**/__pycache__"]
 reportMissingImports = false
 reportOptionalMemberAccess = false
-pythonVersion = "3.9"
+pythonVersion = "3.13"
+venvPath = "."
+venv = "venv"
+
+[tool.pyright.typeCheckingMode]
+basic = true
+
+# 忽略第三方库导入错误
+[tool.pyright.ignore]
+open3d = ["reportMissingImports"]
+laspy = ["reportMissingImports"]
+yaml = ["reportMissingImports"]
+cv2 = ["reportMissingImports"]
+opencv-python = ["reportMissingImports"]
