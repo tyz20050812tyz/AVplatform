@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚗 无人驾驶数据管理平台 - 访问入口</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        
+        .access-section {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .access-link {
+            display: block;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            text-decoration: none;
+            padding: 15px 20px;
+            margin: 10px 0;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            font-size: 1.1em;
+        }
+        
+        .access-link:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .status {
+            text-align: center;
+            margin: 20px 0;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+        }
+        
+        .instructions {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 30px;
+        }
+        
+        .emoji {
+            font-size: 1.5em;
+            margin-right: 10px;
+        }
+    </style>
+    <script>
+        function checkServerStatus() {
+            const localUrl = 'http://127.0.0.1:8501';
+            const networkUrl = 'http://172.16.70.232:8501';
+
+            // 检查本地服务器状态
+            fetch(localUrl)
+                .then(response => {
+                    if (response.ok) {
+                        document.getElementById('status').innerHTML =
+                            '<span class="emoji">✅</span>服务器运行正常（端口 8501）';
+                        document.getElementById('status').style.background =
+                            'rgba(76, 175, 80, 0.3)';
+                    }
+                })
+                .catch(() => {
+                    // 尝试 8502 端口
+                    const altLocalUrl = 'http://127.0.0.1:8502';
+                    fetch(altLocalUrl)
+                        .then(response => {
+                            if (response.ok) {
+                                document.getElementById('status').innerHTML =
+                                    '<span class="emoji">⚠️</span>服务器运行在端口 8502（端口冲突）';
+                                document.getElementById('status').style.background =
+                                    'rgba(255, 193, 7, 0.3)';
+                                updateLinksToPort8502();
+                            }
+                        })
+                        .catch(() => {
+                            document.getElementById('status').innerHTML =
+                                '<span class="emoji">❌</span>服务器未启动，请先运行 start_central_server.bat';
+                            document.getElementById('status').style.background =
+                                'rgba(244, 67, 54, 0.3)';
+                        });
+                });
+        }
+
+        function updateLinksToPort8502() {
+            const links = document.querySelectorAll('.access-link');
+            links.forEach(link => {
+                const href = link.getAttribute('href');
+                if (href && href.includes(':8501')) {
+                    link.setAttribute('href', href.replace(':8501', ':8502'));
+                    link.innerHTML = link.innerHTML.replace(':8501', ':8502');
+                }
+            });
+        }
+
+        // 页面加载时检查服务器状态
+        window.onload = function() {
+            checkServerStatus();
+            // 每30秒检查一次
+            setInterval(checkServerStatus, 30000);
+        };
+    </script>
+</head>
+
+<body>
+    <h1>🚗 无人驾驶数据管理平台</h1>
+
+    <div id="status" class="status">
+        <span class="emoji">🔄</span>检查服务器状态中...
+    </div>
+
+    <div class="access-section">
+        <h2><span class="emoji">🏠</span>本地访问（仅本机）</h2>
+        <p>如果您是在运行服务器的电脑上访问：</p>
+        <a href="http://127.0.0.1:8501" class="access-link" target="_blank">
+            <span class="emoji">🖥️</span>http://127.0.0.1:8501
+        </a>
+        <a href="http://localhost:8501" class="access-link" target="_blank">
+            <span class="emoji">🌐</span>http://localhost:8501
+        </a>
+    </div>
+
+    <div class="access-section">
+        <h2><span class="emoji">🌍</span>网络访问（其他设备）</h2>
+        <p>如果您是从其他电脑或手机访问：</p>
+        <a href="http://172.16.70.232:8501" class="access-link" target="_blank">
+            <span class="emoji">📡</span>http://172.16.70.232:8501
+        </a>
+    </div>
+
+    <div class="instructions">
+        <h3><span class="emoji">📋</span>使用说明</h3>
+        <ul>
+            <li><strong>启动服务器</strong>：双击 <code>start_central_server.bat</code></li>
+            <li><strong>超级管理员登录</strong>：用户名 <code>TongYuze</code>，密码 <code>20050812</code></li>
+            <li><strong>数据存储</strong>：所有用户数据自动保存到服务器电脑</li>
+            <li><strong>权限控制</strong>：只有超级管理员可以查看所有数据</li>
+            <li><strong>网络共享</strong>：其他人可以通过网络地址访问和上传数据</li>
+        </ul>
+
+        <h3><span class="emoji">🔧</span>故障排除</h3>
+        <ul>
+            <li>如果无法访问，请检查服务器是否在运行</li>
+            <li>确保防火墙允许8501端口通信</li>
+            <li>网络访问需要在同一网络环境下</li>
+            <li>如果IP地址变化，请重新运行 <code>scripts/get_server_info.py</code></li>
+        </ul>
+    </div>
+</body>
+
+</html>

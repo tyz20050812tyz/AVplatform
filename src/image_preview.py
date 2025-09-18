@@ -149,7 +149,7 @@ def show_single_image_preview(image_path, image_info=None):
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            st.image(image, caption=os.path.basename(image_path), use_container_width=True)
+            st.image(image, caption=os.path.basename(image_path))
         
         with col2:
             st.subheader("📊 图片信息")
@@ -310,14 +310,13 @@ def show_image_grid_preview(image_data, cols=4):
                         if st.button(
                             f"🔍 查看详情",
                             key=f"img_detail_{start_idx + i + j}",
-                            help=f"点击查看 {img_info['filename']} 的详细信息",
-                            use_container_width=True
+                            help=f"点击查看 {img_info['filename']} 的详细信息"
                         ):
                             st.session_state.selected_image_index = start_idx + i + j
                             st.session_state.show_detail = True
                             st.rerun()
                         
-                        st.image(image, caption=img_info['filename'], use_container_width=True)
+                        st.image(image, caption=img_info['filename'])
                         st.caption(f"📅 {img_info['timestamp'].strftime('%m-%d %H:%M')}")
                         
                     except Exception as e:

@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "storage_type": "local",
+  "storage_path": "",
+  "server_config": {},
+  "central_server": {
+    "enabled": true,
+    "host": "",
+    "port": 8501
+  }
+}

@@ -12,10 +12,24 @@ import cv2
 import numpy as np
 
 # 导入认证模块
-from auth import check_authentication, show_auth_page, show_user_info, init_auth_database
+from auth import check_authentication, show_auth_page, show_user_info, init_auth_database, can_view_feedback, can_submit_feedback, get_current_user_role
 
 # 导入图片预览模块
 from image_preview import show_image_preview_interface
+from image_preview_optimized import show_optimized_image_preview_interface
+
+# 导入网络存储模块
+from network_storage import network_config, get_storage_path, ensure_storage_directory, copy_to_central_storage
+
+# 导入在线用户管理
+get_online_users_count = lambda: 0
+track_user_online = None
+OnlineUserManager = None
+try:
+    from online_users import get_online_users_count, track_user_online, OnlineUserManager
+    ONLINE_USERS_AVAILABLE = True
+except ImportError:
+    ONLINE_USERS_AVAILABLE = False
 
 # 初始化变量，确保在任何情况下都有定义
 o3d = None
@@ -479,7 +493,11 @@ def visualize_multiple_pointclouds(file_paths):
 
 def init_database():
     """初始化SQLite数据库"""
-    conn = sqlite3.connect('data.db')
+    # 获取数据库路径
+    db_path = network_config.get_database_path()
+    ensure_storage_directory(os.path.dirname(db_path))
+    
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     
     # 创建数据集表
@@ -545,7 +563,8 @@ def show_homepage():
     """)
     
     # 统计信息
-    conn = sqlite3.connect('data.db')
+    db_path = network_config.get_database_path()
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM datasets")
     dataset_count = c.fetchone()[0]
@@ -587,8 +606,8 @@ def show_upload_page():
             try:
                 # 创建存储目录
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                dataset_dir = f"datasets/{dataset_name}_{timestamp}"
-                os.makedirs(dataset_dir, exist_ok=True)
+                dataset_dir = os.path.join(network_config.get_datasets_path(), f"{dataset_name}_{timestamp}")
+                ensure_storage_directory(dataset_dir)
                 
                 # 保存文件
                 file_paths = []
@@ -599,7 +618,8 @@ def show_upload_page():
                     file_paths.append(file_path)
                 
                 # 保存到数据库
-                conn = sqlite3.connect('data.db')
+                db_path = network_config.get_database_path()
+                conn = sqlite3.connect(db_path)
                 c = conn.cursor()
                 c.execute('''
                     INSERT INTO datasets (name, description, upload_time, file_count, file_paths)
@@ -625,7 +645,8 @@ def show_browse_page():
     st.title("📁 数据浏览")
     
     # 从数据库获取数据集列表
-    conn = sqlite3.connect('data.db')
+    db_path = network_config.get_database_path()
+    conn = sqlite3.connect(db_path)
     datasets = pd.read_sql_query("SELECT * FROM datasets ORDER BY upload_time DESC", conn)
     conn.close()
     
@@ -675,7 +696,8 @@ def show_visualization_page():
     st.title("📈 数据可视化")
     
     # 获取数据集列表
-    conn = sqlite3.connect('data.db')
+    db_path = network_config.get_database_path()
+    conn = sqlite3.connect(db_path)
     datasets = pd.read_sql_query("SELECT id, name FROM datasets", conn)
     conn.close()
     
@@ -714,8 +736,23 @@ def show_visualization_page():
             if image_files:
                 st.subheader("🖼️ 图像数据")
                 
-                # 使用新的图片预览界面
-                show_image_preview_interface(image_files)
+                # 性能模式选择
+                if len(image_files) > 20:  # 大于20张图片时提供选择
+                    performance_mode = st.radio(
+                        "🚀 选择模式",
+                        ["性能优化模式", "标准模式"],
+                        index=0,  # 默认优化模式
+                        horizontal=True,
+                        help=f"检测到{len(image_files)}张图片，建议使用性能优化模式"
+                    )
+                    
+                    if performance_mode == "性能优化模式":
+                        show_optimized_image_preview_interface(image_files)
+                    else:
+                        show_image_preview_interface(image_files)
+                else:
+                    # 少量图片直接使用标准模式
+                    show_image_preview_interface(image_files)
             
             # 显示CSV数据
             if csv_files:
@@ -849,6 +886,846 @@ def delete_dataset(dataset_id):
     except Exception as e:
         st.error(f"删除失败: {str(e)}")
 
+def show_documentation_page():
+    """显示使用文档页面"""
+    st.title("📚 使用文档")
+    
+    # 文档导航
+    doc_tab = st.selectbox(
+        "选择文档类型",
+        ["平台简介", "功能指南", "性能优化", "发布说明"]
+    )
+    
+    if doc_tab == "平台简介":
+        st.markdown("""
+        ## 🚗 平台简介
+        
+        无人驾驶数据管理平台是一个专业的多模态数据管理系统。
+        
+        ### 主要特性
+        - 📁 **数据管理**: 支持多种传感器数据格式
+        - 🖼️ **图片预览**: 智能时间轴浏览，支持多种时间戳格式
+        - 🌌 **点云可视化**: 高性能3D点云显示和分析
+        - 📊 **数据分析**: 丰富的可视化和统计功能
+        
+        ### 支持格式
+        - **点云数据**: .pcd, .las/.laz, .txt/.xyz
+        - **图像数据**: .png, .jpg, .jpeg
+        - **配置文件**: .yaml, .yml, .json
+        - **数据文件**: .csv
+        - **ROS数据**: .bag
+        """)
+    
+    elif doc_tab == "功能指南":
+        st.markdown("""
+        ## 🗺️ 功能指南
+        
+        ### 📁 数据上传
+        1. 点击"数据上传"菜单
+        2. 输入数据集名称和描述
+        3. 选择要上传的文件
+        4. 点击"上传数据集"
+        
+        ### 🔍 数据浏览
+        1. 在"数据浏览"页面查看所有数据集
+        2. 使用搜索功能查找特定数据集
+        3. 点击"查看详情"查看文件列表
+        
+        ### 🖼️ 图片预览
+        1. 在"数据可视化"中选择包含图片的数据集
+        2. 选择预览模式：时间轴/网格/单张
+        3. 使用拖动滑块或导航按钮浏览
+        
+        ### 🌌 点云可视化
+        1. 选择包含.pcd文件的数据集
+        2. 调整可视化参数（点大小、颜色模式等）
+        3. 选择不同的视角模式
+        """)
+    
+    elif doc_tab == "性能优化":
+        # 读取性能优化指南
+        perf_guide_path = "docs/performance_optimization_guide.md"
+        if os.path.exists(perf_guide_path):
+            with open(perf_guide_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            st.markdown(content)
+        else:
+            st.info("性能优化指南文档未找到")
+    
+    else:  # 发布说明
+        # 读取发布说明
+        release_notes_path = "RELEASE_NOTES.md"
+        if os.path.exists(release_notes_path):
+            with open(release_notes_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            st.markdown(content)
+        else:
+            st.info("发布说明文档未找到")
+
+
+def show_feature_request_page():
+    """显示功能建议页面"""
+    st.title("💡 功能建议")
+    
+    # 获取当前用户信息
+    current_user = st.session_state.get('user', {})
+    username = current_user.get('username', '')
+    user_role = get_current_user_role()
+    
+    st.markdown("""
+    欢迎提出您的功能建议！您的反馈将帮助我们不断改进平台。
+    """)
+    
+    # 权限提示
+    if user_role == 'super_admin':
+        st.info("🔑 您是超级管理员，可以查看和管理所有功能建议")
+    else:
+        st.info("📝 您可以提交功能建议，但仅超级管理员可以查看具体内容")
+    
+    # 功能建议表单
+    with st.form("feature_request_form"):
+        st.subheader("提交功能建议")
+        
+        # 基本信息
+        user_name = st.text_input("您的姓名（可选）", value=username)
+        user_email = st.text_input("联系邮箱（可选）")
+        
+        # 功能分类
+        feature_category = st.selectbox(
+            "功能分类",
+            ["数据管理", "可视化功能", "用户交互", "性能优化", "其他"]
+        )
+        
+        # 功能描述
+        feature_title = st.text_input("功能标题", placeholder="简要描述您的功能建议")
+        feature_description = st.text_area(
+            "详细描述",
+            placeholder="请详细描述您希望的功能...",
+            height=100
+        )
+        
+        # 使用场景
+        use_case = st.text_area(
+            "使用场景",
+            placeholder="请描述该功能的具体使用场景...",
+            height=80
+        )
+        
+        # 优先级
+        priority = st.selectbox(
+            "优先级",
+            ["低", "中", "高", "紧急"]
+        )
+        
+        # 提交按钮
+        submitted = st.form_submit_button("📨 提交建议")
+        
+        if submitted and feature_title and feature_description:
+            if can_submit_feedback(username):
+                # 保存功能建议
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                suggestion = {
+                    'timestamp': timestamp,
+                    'user_name': user_name or username or '匿名用户',
+                    'user_email': user_email,
+                    'category': feature_category,
+                    'title': feature_title,
+                    'description': feature_description,
+                    'use_case': use_case,
+                    'priority': priority
+                }
+                
+                # 尝试保存到文件
+                try:
+                    data_dir = network_config.get_data_path()
+                    suggestions_file = os.path.join(data_dir, "feature_suggestions.json")
+                    ensure_storage_directory(data_dir)
+                    
+                    # 读取现有建议
+                    if os.path.exists(suggestions_file):
+                        with open(suggestions_file, 'r', encoding='utf-8') as f:
+                            suggestions = json.load(f)
+                    else:
+                        suggestions = []
+                    
+                    suggestions.append(suggestion)
+                    
+                    # 保存建议
+                    with open(suggestions_file, 'w', encoding='utf-8') as f:
+                        json.dump(suggestions, f, ensure_ascii=False, indent=2)
+                    
+                    st.success("🎉 功能建议提交成功！感谢您的反馈。")
+                    st.balloons()
+                    
+                except Exception as e:
+                    st.error(f"保存失败: {e}")
+            else:
+                st.error("您没有权限提交功能建议")
+    
+    # 显示已有建议（仅超级管理员可见）
+    if can_view_feedback(username):
+        if st.expander("📄 查看已有建议（仅超级管理员可见）"):
+            try:
+                data_dir = network_config.get_data_path()
+                suggestions_file = os.path.join(data_dir, "feature_suggestions.json")
+                if os.path.exists(suggestions_file):
+                    with open(suggestions_file, 'r', encoding='utf-8') as f:
+                        suggestions = json.load(f)
+                    
+                    if suggestions:
+                        st.write(f"📊 **总计**: {len(suggestions)} 条功能建议")
+                        
+                        # 按类别筛选
+                        categories = list(set([s['category'] for s in suggestions]))
+                        selected_category = st.selectbox("筛选类别", ["全部"] + categories)
+                        
+                        # 按优先级筛选
+                        priorities = list(set([s['priority'] for s in suggestions]))
+                        selected_priority = st.selectbox("筛选优先级", ["全部"] + priorities)
+                        
+                        # 筛选建议
+                        filtered_suggestions = suggestions
+                        if selected_category != "全部":
+                            filtered_suggestions = [s for s in filtered_suggestions if s['category'] == selected_category]
+                        if selected_priority != "全部":
+                            filtered_suggestions = [s for s in filtered_suggestions if s['priority'] == selected_priority]
+                        
+                        # 显示建议
+                        for i, suggestion in enumerate(reversed(filtered_suggestions[-20:])):
+                            with st.container():
+                                priority_icon = {"低": "🔵", "中": "🟡", "高": "🟠", "紧急": "🔴"}.get(
+                                    suggestion['priority'], "🟡")
+                                st.write(f"{priority_icon} **{suggestion['title']}** - {suggestion['category']}")
+                                st.write(f"提交时间: {suggestion['timestamp']} | 提交者: {suggestion['user_name']}")
+                                st.write(suggestion['description'])
+                                if suggestion['use_case']:
+                                    st.write(f"使用场景: {suggestion['use_case']}")
+                                if suggestion.get('user_email'):
+                                    st.write(f"联系邮箱: {suggestion['user_email']}")
+                                st.markdown("---")
+                    else:
+                        st.info("还没有功能建议")
+                else:
+                    st.info("还没有功能建议")
+            except Exception as e:
+                st.error(f"读取建议失败: {e}")
+    else:
+        st.info("🔒 仅超级管理员可以查看已提交的功能建议")
+
+
+def show_bug_report_page():
+    """显示问题反馈页面"""
+    st.title("🐛 问题反馈")
+    
+    # 获取当前用户信息
+    current_user = st.session_state.get('user', {})
+    username = current_user.get('username', '')
+    user_role = get_current_user_role()
+    
+    st.markdown("""
+    遇到问题了吗？请告诉我们！您的反馈将帮助我们及时修复问题。
+    """)
+    
+    # 权限提示
+    if user_role == 'super_admin':
+        st.info("🔑 您是超级管理员，可以查看和管理所有问题反馈")
+    else:
+        st.info("📝 您可以提交问题反馈，但仅超级管理员可以查看具体内容")
+    
+    # 问题反馈表单
+    with st.form("bug_report_form"):
+        st.subheader("提交问题报告")
+        
+        # 基本信息
+        user_name = st.text_input("您的姓名（可选）", value=username)
+        user_email = st.text_input("联系邮箱（可选）")
+        
+        # 问题分类
+        bug_category = st.selectbox(
+            "问题类型",
+            ["功能错误", "性能问题", "界面问题", "数据问题", "其他"]
+        )
+        
+        # 问题描述
+        bug_title = st.text_input("问题标题", placeholder="简要描述问题")
+        bug_description = st.text_area(
+            "问题描述",
+            placeholder="请详细描述您遇到的问题...",
+            height=100
+        )
+        
+        # 复现步骤
+        reproduction_steps = st.text_area(
+            "复现步骤",
+            placeholder="请描述如何复现该问题...",
+            height=80
+        )
+        
+        # 环境信息
+        col1, col2 = st.columns(2)
+        with col1:
+            browser = st.selectbox("浏览器", ["Chrome", "Firefox", "Safari", "Edge", "其他"])
+        with col2:
+            os_type = st.selectbox("操作系统", ["Windows", "macOS", "Linux", "其他"])
+        
+        # 严重程度
+        severity = st.selectbox(
+            "严重程度",
+            ["轻微", "一般", "严重", "致命"]
+        )
+        
+        # 提交按钮
+        submitted = st.form_submit_button("📨 提交问题报告")
+        
+        if submitted and bug_title and bug_description:
+            if can_submit_feedback(username):
+                # 保存问题报告
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                bug_report = {
+                    'timestamp': timestamp,
+                    'user_name': user_name or username or '匿名用户',
+                    'user_email': user_email,
+                    'category': bug_category,
+                    'title': bug_title,
+                    'description': bug_description,
+                    'reproduction_steps': reproduction_steps,
+                    'browser': browser,
+                    'os': os_type,
+                    'severity': severity
+                }
+                
+                # 尝试保存到文件
+                try:
+                    data_dir = network_config.get_data_path()
+                    bugs_file = os.path.join(data_dir, "bug_reports.json")
+                    ensure_storage_directory(data_dir)
+                    
+                    # 读取现有报告
+                    if os.path.exists(bugs_file):
+                        with open(bugs_file, 'r', encoding='utf-8') as f:
+                            bug_reports = json.load(f)
+                    else:
+                        bug_reports = []
+                    
+                    bug_reports.append(bug_report)
+                    
+                    # 保存报告
+                    with open(bugs_file, 'w', encoding='utf-8') as f:
+                        json.dump(bug_reports, f, ensure_ascii=False, indent=2)
+                    
+                    st.success("🎉 问题报告提交成功！我们将尽快处理。")
+                    st.balloons()
+                    
+                except Exception as e:
+                    st.error(f"保存失败: {e}")
+            else:
+                st.error("您没有权限提交问题反馈")
+    
+    # 显示已有问题报告（仅超级管理员可见）
+    if can_view_feedback(username):
+        if st.expander("📄 查看已有问题报告（仅超级管理员可见）"):
+            try:
+                data_dir = network_config.get_data_path()
+                bugs_file = os.path.join(data_dir, "bug_reports.json")
+                if os.path.exists(bugs_file):
+                    with open(bugs_file, 'r', encoding='utf-8') as f:
+                        bug_reports = json.load(f)
+                    
+                    if bug_reports:
+                        st.write(f"📊 **总计**: {len(bug_reports)} 个问题报告")
+                        
+                        # 按类型筛选
+                        categories = list(set([r['category'] for r in bug_reports]))
+                        selected_category = st.selectbox("筛选问题类型", ["全部"] + categories, key="bug_category_filter")
+                        
+                        # 按严重程度筛选
+                        severities = list(set([r['severity'] for r in bug_reports]))
+                        selected_severity = st.selectbox("筛选严重程度", ["全部"] + severities, key="bug_severity_filter")
+                        
+                        # 筛选报告
+                        filtered_reports = bug_reports
+                        if selected_category != "全部":
+                            filtered_reports = [r for r in filtered_reports if r['category'] == selected_category]
+                        if selected_severity != "全部":
+                            filtered_reports = [r for r in filtered_reports if r['severity'] == selected_severity]
+                        
+                        # 显示报告
+                        for i, report in enumerate(reversed(filtered_reports[-20:])):
+                            with st.container():
+                                severity_icon = {"轻微": "🟢", "一般": "🟡", "严重": "🟠", "致命": "🔴"}.get(
+                                    report['severity'], "🟡")
+                                st.write(f"{severity_icon} **{report['title']}** - {report['category']}")
+                                st.write(
+                                    f"提交时间: {report['timestamp']} | 提交者: {report['user_name']} | 环境: {report['os']} + {report['browser']}")
+                                st.write(report['description'])
+                                if report['reproduction_steps']:
+                                    st.write(f"复现步骤: {report['reproduction_steps']}")
+                                if report.get('user_email'):
+                                    st.write(f"联系邮箱: {report['user_email']}")
+                                st.markdown("---")
+                    else:
+                        st.info("还没有问题报告")
+                else:
+                    st.info("还没有问题报告")
+            except Exception as e:
+                st.error(f"读取报告失败: {e}")
+    else:
+        st.info("🔒 仅超级管理员可以查看已提交的问题报告")
+
+
+def show_online_users_widget():
+    """显示在线用户统计组件"""
+    if not ONLINE_USERS_AVAILABLE:
+        return
+    
+    try:
+        # 获取在线人数
+        online_count = get_online_users_count()
+        
+        # 显示在线人数
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("👥 **在线状态**")
+        
+        # 使用不同颜色表示在线人数
+        if online_count == 0:
+            color = "red"
+            status = "禁锁"
+        elif online_count == 1:
+            color = "blue"
+            status = "单人"
+        elif online_count <= 5:
+            color = "orange"
+            status = "活跃"
+        else:
+            color = "green"
+            status = "热闹"
+        
+        # 显示在线人数
+        st.sidebar.markdown(
+            f"<div style='text-align: center; padding: 10px; background: linear-gradient(90deg, #{color}20, #{color}40); border-radius: 8px; margin: 5px 0;'>" +
+            f"<h3 style='margin: 0; color: {color};'>👥 {online_count} 人在线</h3>" +
+            f"<p style='margin: 5px 0; color: {color}; font-size: 12px;'>{status}</p>" +
+            "</div>",
+            unsafe_allow_html=True
+        )
+        
+        # 显示详细统计（仅超级管理员可见）
+        user_role = get_current_user_role()
+        if user_role == 'super_admin':
+            with st.sidebar.expander("📈 详细统计"):
+                try:
+                    # 创建管理器实例
+                    if OnlineUserManager:
+                        db_path = network_config.get_database_path()
+                        manager = OnlineUserManager(db_path)
+                        
+                        # 获取访问统计
+                        stats = manager.get_visit_stats()
+                        
+                        st.write(f"👥 当前在线: {stats['online_count']} 人")
+                        st.write(f"📅 今日访问: {stats['today_visits']} 人")
+                        st.write(f"📊 总访问量: {stats['total_visits']} 人")
+                        
+                        # 显示在线用户列表
+                        online_users = manager.get_online_users()
+                        if online_users:
+                            st.write("👤 **在线用户**:")
+                            for user in online_users[:5]:  # 只显示前5个
+                                st.write(f"- {user['username']} ({user['online_duration']})")
+                            
+                            if len(online_users) > 5:
+                                st.write(f"... 及其他 {len(online_users) - 5} 人")
+                    else:
+                        st.write("在线用户管理器不可用")
+                            
+                except Exception as e:
+                    st.write(f"获取统计失败: {e}")
+        
+    except Exception as e:
+        st.sidebar.write(f"在线人数获取失败: {e}")
+
+
+def track_page_visit(page_name: str):
+    """跟踪页面访问"""
+    if not ONLINE_USERS_AVAILABLE:
+        return
+    
+    # 获取用户session token
+    session_token = st.session_state.get('session_token')
+    if session_token and track_user_online:
+        try:
+            track_user_online(session_token, page_name)  # type: ignore
+        except Exception as e:
+            print(f"跟踪页面访问失败: {e}")
+
+
+def show_admin_settings_page():
+    """显示管理员设置页面"""
+    # 获取当前用户信息
+    current_user = st.session_state.get('user', {})
+    username = current_user.get('username', '')
+    user_role = get_current_user_role()
+    
+    # 检查权限
+    if user_role != 'super_admin':
+        st.error("🚫 您没有权限访问此页面。仅超级管理员可以访问。")
+        return
+    
+    st.title("⚙️ 管理员设置")
+    
+    st.markdown("""
+    您好，超级管理员！在这里您可以配置数据集中存储和服务器设置。
+    """)
+    
+    # 服务器模式配置
+    st.subheader("🚀 服务器模式")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        current_server_config = network_config.get_server_info()
+        is_server_mode = st.checkbox(
+            "启用中央服务器模式", 
+            value=current_server_config.get('enabled', False),
+            help="启用后，所有用户数据将集中存储在您的电脑上"
+        )
+        
+        if is_server_mode:
+            st.info("ℹ️ 中央服务器模式已启用，所有数据将集中存储")
+        else:
+            st.warning("⚠️ 当前为本地模式，每个用户的数据在各自的电脑上")
+    
+    with col2:
+        if st.button("🚀 部署服务器", help="启动服务器部署向导"):
+            st.session_state.page = '服务器部署'
+            st.rerun()
+    
+    # 数据存储配置
+    st.subheader("💾 数据存储配置")
+    
+    current_config = network_config.config
+    
+    # 存储类型
+    storage_type = st.selectbox(
+        "存储类型",
+        ["local", "network_share", "custom_path"],
+        index=["local", "network_share", "custom_path"].index(current_config.get('storage_type', 'local')),
+        format_func=lambda x: {
+            "local": "🖥️ 本地存储",
+            "network_share": "🌍 网络共享",
+            "custom_path": "📁 自定义路径"
+        }[x]
+    )
+    
+    # 存储路径
+    storage_path = ""
+    if storage_type != "local":
+        storage_path = st.text_input(
+            "存储路径",
+            value=current_config.get('storage_path', ''),
+            placeholder="例如: //192.168.1.100/shared/platform_data 或 D:/platform_data",
+            help="请输入您希望存储数据的路径"
+        )
+        
+        if storage_path:
+            # 检查路径是否可访问
+            if os.path.exists(storage_path):
+                st.success(f"✅ 路径可访问: {storage_path}")
+            else:
+                st.warning(f"⚠️ 路径不存在或不可访问: {storage_path}")
+                if st.button("📁 创建目录"):
+                    try:
+                        os.makedirs(storage_path, exist_ok=True)
+                        st.success("✅ 目录创建成功")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 创建目录失败: {e}")
+    
+    # 保存配置
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("💾 保存设置", type="primary"):
+            try:
+                # 更新配置
+                if storage_type == "local":
+                    network_config.config.update({
+                        "enabled": False,
+                        "storage_type": "local",
+                        "storage_path": ""
+                    })
+                else:
+                    network_config.config.update({
+                        "enabled": True,
+                        "storage_type": storage_type,
+                        "storage_path": storage_path
+                    })
+                
+                # 更新服务器模式
+                network_config.config["central_server"]["enabled"] = is_server_mode
+                
+                network_config.save_config()
+                st.success("✅ 设置保存成功！")
+                st.balloons()
+                
+            except Exception as e:
+                st.error(f"❌ 保存失败: {e}")
+    
+    with col2:
+        if st.button("🔄 重置为默认"):
+            network_config.config = {
+                "enabled": False,
+                "storage_type": "local",
+                "storage_path": "",
+                "server_config": {},
+                "central_server": {
+                    "enabled": False,
+                    "host": "",
+                    "port": 8501
+                }
+            }
+            network_config.save_config()
+            st.success("✅ 已重置为默认设置")
+            st.rerun()
+    
+    # 当前配置显示
+    st.subheader("📊 当前配置")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("💾 **数据存储**")
+        st.write(f"- 类型: {current_config.get('storage_type', 'local')}")
+        st.write(f"- 启用: {'Yes' if current_config.get('enabled', False) else 'No'}")
+        if current_config.get('storage_path'):
+            st.write(f"- 路径: {current_config['storage_path']}")
+    
+    with col2:
+        st.write("🚀 **服务器模式**")
+        server_config = current_config.get('central_server', {})
+        st.write(f"- 启用: {'Yes' if server_config.get('enabled', False) else 'No'}")
+        if server_config.get('host'):
+            st.write(f"- 地址: {server_config['host']}:{server_config.get('port', 8501)}")
+    
+    # 数据管理
+    st.subheader("📁 数据管理")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        try:
+            db_path = network_config.get_database_path()
+            conn = sqlite3.connect(db_path)
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM datasets")
+            dataset_count = c.fetchone()[0]
+            conn.close()
+            st.metric("📁 数据集", dataset_count)
+        except:
+            st.metric("📁 数据集", "N/A")
+    
+    with col2:
+        try:
+            datasets_path = network_config.get_datasets_path()
+            if os.path.exists(datasets_path):
+                total_size = sum(os.path.getsize(os.path.join(dirpath, filename))
+                               for dirpath, dirnames, filenames in os.walk(datasets_path)
+                               for filename in filenames)
+                st.metric("💾 存储大小", f"{total_size / 1024 / 1024:.1f} MB")
+            else:
+                st.metric("💾 存储大小", "0 MB")
+        except:
+            st.metric("💾 存储大小", "N/A")
+    
+    with col3:
+        try:
+            data_path = network_config.get_data_path()
+            feedback_files = ['feature_suggestions.json', 'bug_reports.json']
+            total_feedback = 0
+            for file in feedback_files:
+                file_path = os.path.join(data_path, file)
+                if os.path.exists(file_path):
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        total_feedback += len(data)
+            st.metric("📝 反馈数", total_feedback)
+        except:
+            st.metric("📝 反馈数", "N/A")
+
+
+def show_server_deploy_page():
+    """显示服务器部署页面"""
+    # 检查权限
+    current_user = st.session_state.get('user', {})
+    user_role = get_current_user_role()
+    
+    if user_role != 'super_admin':
+        st.error("🚫 您没有权限访问此页面。仅超级管理员可以访问。")
+        return
+    
+    # 导入部署模块
+    try:
+        from scripts.deploy_server import deploy_server
+        deploy_server()
+    except ImportError:
+        st.error("❌ 部署模块不可用")
+        
+        # 手动部署说明
+        st.title("🚀 手动部署指南")
+        
+        st.markdown("""
+        ## 📝 部署步骤
+        
+        ### 1. 准备工作
+        - 确保您的电脑具有固定IP地址或域名
+        - 确保防火墙允许相关端口通信
+        
+        ### 2. 启动命令
+        在命令行中执行：
+        ```bash
+        cd /path/to/platform
+        python -m streamlit run src/main.py --server.port 8501 --server.address 0.0.0.0
+        ```
+        
+        ### 3. 访问地址
+        其他用户可以通过以下地址访问：
+        ```
+        http://您的IP地址:8501
+        ```
+        
+        ### 4. 注意事项
+        - 保持命令行窗口开启
+        - 定期备份数据
+        - 监控系统资源使用
+        """)
+
+
+def show_online_users_page():
+    """显示在线用户管理页面（仅超级管理员）"""
+    # 检查权限
+    current_user = st.session_state.get('user', {})
+    user_role = get_current_user_role()
+    
+    if user_role != 'super_admin':
+        st.error("🚫 您没有权限访问此页面。仅超级管理员可以访问。")
+        return
+    
+    if not ONLINE_USERS_AVAILABLE:
+        st.error("❌ 在线用户管理功能不可用")
+        return
+    
+    st.title("👥 在线用户管理")
+    
+    try:
+        if OnlineUserManager:
+            db_path = network_config.get_database_path()
+            manager = OnlineUserManager(db_path)
+            
+            # 获取统计数据
+            stats = manager.get_visit_stats()
+            online_users = manager.get_online_users()
+            
+            # 显示统计卡片
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("👥 当前在线", stats['online_count'])
+            
+            with col2:
+                st.metric("📅 今日访问", stats['today_visits'])
+            
+            with col3:
+                st.metric("📊 总访问量", stats['total_visits'])
+            
+            with col4:
+                # 实时更新按钮
+                if st.button("🔄 刷新"):
+                    st.rerun()
+            
+            # 在线用户列表
+            st.subheader("👤 在线用户列表")
+            
+            if online_users:
+                # 创建表格
+                users_data = []
+                for user in online_users:
+                    users_data.append({
+                        '👤 用户名': user['username'],
+                        '📱 IP地址': user['ip_address'] or '未知',
+                        '🕐 登录时间': user['login_time'][:19] if user['login_time'] else '未知',
+                        '❤️ 最后活动': user['last_seen'][:19] if user['last_seen'] else '未知',
+                        '🕰️ 在线时长': user['online_duration'],
+                        '📄 当前页面': user['page_path'] or '未知'
+                    })
+                
+                # 显示表格
+                import pandas as pd
+                df = pd.DataFrame(users_data)
+                st.dataframe(df, use_container_width=True)
+                
+                # 显示详细信息
+                with st.expander("📈 详细分析"):
+                    # 用户分布统计
+                    st.write("**👥 用户类型分布:**")
+                    guest_count = sum(1 for u in online_users if u['username'] == '游客')
+                    registered_count = len(online_users) - guest_count
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("👤 注册用户", registered_count)
+                    with col2:
+                        st.metric("👥 游客用户", guest_count)
+                    
+                    # 活跃页面统计
+                    st.write("**📄 活跃页面:**")
+                    page_counts = {}
+                    for user in online_users:
+                        page = user['page_path'] or '未知'
+                        page_counts[page] = page_counts.get(page, 0) + 1
+                    
+                    for page, count in sorted(page_counts.items(), key=lambda x: x[1], reverse=True):
+                        st.write(f"- {page}: {count} 人")
+                
+            else:
+                st.info("😴 当前没有在线用户")
+            
+            # 管理功能
+            st.subheader("🔧 管理功能")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🧹 清理无效会话"):
+                    manager.cleanup_inactive_users()
+                    st.success("✅ 已清理无效会话")
+                    st.rerun()
+            
+            with col2:
+                if st.button("📈 查看访问日志"):
+                    # 显示访问日志（简化版）
+                    import pandas as pd  # 重新导入
+                    conn = sqlite3.connect(db_path)
+                    df_visits = pd.read_sql_query("""
+                        SELECT visit_time, username, ip_address, action 
+                        FROM user_visits 
+                        ORDER BY visit_time DESC 
+                        LIMIT 50
+                    """, conn)
+                    conn.close()
+                    
+                    if not df_visits.empty:
+                        st.dataframe(df_visits, use_container_width=True)
+                    else:
+                        st.info("没有访问日志")
+        else:
+            st.error("在线用户管理器不可用")
+            
+    except Exception as e:
+        st.error(f"加载在线用户数据失败: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+
 def main():
     """主函数"""
     st.set_page_config(
@@ -870,13 +1747,34 @@ def main():
     # 显示用户信息
     show_user_info()
     
+    # 显示在线用户统计
+    show_online_users_widget()
+    
     # 侧边栏导航
     st.sidebar.title("🚗 导航菜单")
+    
+    # 检查session state中是否有页面跳转
+    current_page = st.session_state.get('page', '首页')
+    
+    # 根据用户角色显示不同菜单
+    user_role = get_current_user_role()
+    
+    if user_role == 'super_admin':
+        # 超级管理员可以看到所有功能
+        page_options = ["首页", "数据上传", "数据浏览", "数据可视化", "使用文档", "功能建议", "问题反馈", "管理员设置", "在线用户", "服务器部署"]
+    else:
+        # 普通用户只能看到基本功能
+        page_options = ["首页", "数据上传", "数据浏览", "数据可视化", "使用文档", "功能建议", "问题反馈"]
+    
     page = st.sidebar.selectbox(
         "选择功能",
-        ["首页", "数据上传", "数据浏览", "数据可视化"],
+        page_options,
+        index=page_options.index(current_page) if current_page in page_options else 0,
         help="选择要使用的功能模块"
     )
+    
+    # 更新session state
+    st.session_state.page = page
     
     # 侧边栏信息
     st.sidebar.markdown("---")
@@ -892,20 +1790,37 @@ def main():
     except:
         st.sidebar.metric("数据集数量", "0")
     
-    st.sidebar.markdown("### 🔗 快速链接")
-    st.sidebar.markdown("[📚 使用文档](#)")
-    st.sidebar.markdown("[💡 功能建议](#)")
-    st.sidebar.markdown("[🐛 问题反馈](#)")
-    
     # 页面路由
     if page == "首页":
+        track_page_visit("首页")
         show_homepage()
     elif page == "数据上传":
+        track_page_visit("数据上传")
         show_upload_page()
     elif page == "数据浏览":
+        track_page_visit("数据浏览")
         show_browse_page()
     elif page == "数据可视化":
+        track_page_visit("数据可视化")
         show_visualization_page()
+    elif page == "使用文档":
+        track_page_visit("使用文档")
+        show_documentation_page()
+    elif page == "功能建议":
+        track_page_visit("功能建议")
+        show_feature_request_page()
+    elif page == "问题反馈":
+        track_page_visit("问题反馈")
+        show_bug_report_page()
+    elif page == "管理员设置":
+        track_page_visit("管理员设置")
+        show_admin_settings_page()
+    elif page == "在线用户":
+        track_page_visit("在线用户")
+        show_online_users_page()
+    elif page == "服务器部署":
+        track_page_visit("服务器部署")
+        show_server_deploy_page()
 
 if __name__ == "__main__":
     main()

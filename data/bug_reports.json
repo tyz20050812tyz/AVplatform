@@ -1,0 +1,38 @@
+[
+  {
+    "timestamp": "2025-09-18 19:21:37",
+    "user_name": "1",
+    "user_email": "1",
+    "category": "数据问题",
+    "title": "1",
+    "description": "1",
+    "reproduction_steps": "1",
+    "browser": "Chrome",
+    "os": "Windows",
+    "severity": "一般"
+  },
+  {
+    "timestamp": "2025-09-18 19:21:58",
+    "user_name": "2",
+    "user_email": "2",
+    "category": "功能错误",
+    "title": "2",
+    "description": "2",
+    "reproduction_steps": "2",
+    "browser": "Chrome",
+    "os": "Windows",
+    "severity": "轻微"
+  },
+  {
+    "timestamp": "2025-09-18 20:28:34",
+    "user_name": "admin",
+    "user_email": "123",
+    "category": "功能错误",
+    "title": "BUG",
+    "description": "有 bug！！！",
+    "reproduction_steps": "随便点都是 bug",
+    "browser": "Chrome",
+    "os": "Windows",
+    "severity": "致命"
+  }
+]

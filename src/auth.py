@@ -25,7 +25,8 @@ except ImportError:
         def rerun(self): pass
         def expander(self, *args, **kwargs): return self
         def button(self, *args, **kwargs): return False
-        def sidebar(self): return self
+        def sidebar(self): 
+            return self
         def write(self, *args, **kwargs): pass
         def __enter__(self): return self
         def __exit__(self, *args): pass
@@ -38,6 +39,16 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import re
+
+# 导入在线用户管理
+add_user_online = None
+remove_user_online = None
+track_user_online = None
+try:
+    from online_users import add_user_online, remove_user_online, track_user_online
+    ONLINE_USERS_AVAILABLE = True
+except ImportError:
+    ONLINE_USERS_AVAILABLE = False
 
 # 配置常量
 SESSION_TIMEOUT_HOURS = 24  # 会话超时时间（小时）
@@ -95,6 +106,23 @@ def init_auth_database():
             datetime.now().isoformat()
         ))
     
+    # 创建超级管理员账户TongYuze
+    c.execute("SELECT COUNT(*) FROM users WHERE username = 'TongYuze'")
+    if c.fetchone()[0] == 0:
+        super_admin_salt = secrets.token_hex(32)
+        super_admin_password_hash = hash_password("20050812", super_admin_salt)
+        
+        c.execute('''
+            INSERT INTO users (username, email, password_hash, salt, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            'TongYuze',
+            'tongyuze@platform.com',
+            super_admin_password_hash,
+            super_admin_salt,
+            datetime.now().isoformat()
+        ))
+    
     conn.commit()
     conn.close()
 
@@ -147,7 +175,7 @@ def is_user_locked(username: str) -> tuple[bool, Optional[str]]:
     failed_attempts, locked_until = result
     
     if locked_until:
-        lock_time = datetime.fromisoformat(locked_until)
+        lock_time = datetime.fromisoformat(locked_until)  # type: ignore
         if datetime.now() < lock_time:
             return True, locked_until
         else:
@@ -415,10 +443,11 @@ def show_login_page():
             # 检查用户是否被锁定
             is_locked, locked_until = is_user_locked(username)
             if is_locked:
-                lock_time = datetime.fromisoformat(locked_until)
-                remaining_time = lock_time - datetime.now()
-                minutes = int(remaining_time.total_seconds() / 60)
-                st.error(f"🔒 账户已被锁定，请在 {minutes} 分钟后重试")
+                if locked_until:  # 添加空值检查
+                    lock_time = datetime.fromisoformat(locked_until)
+                    remaining_time = lock_time - datetime.now()
+                    minutes = int(remaining_time.total_seconds() / 60)
+                    st.error(f"🔒 账户已被锁定，请在 {minutes} 分钟后重试")
             else:
                 user = authenticate_user(username, password)
                 if user:
@@ -426,9 +455,20 @@ def show_login_page():
                     session_token = create_user_session(user['id'])
                     
                     # 保存到session state
-                    st.session_state.user = user
-                    st.session_state.session_token = session_token
-                    st.session_state.authenticated = True
+                    st.session_state.user = user  # type: ignore
+                    st.session_state.session_token = session_token  # type: ignore
+                    st.session_state.authenticated = True  # type: ignore
+                    
+                    # 记录用户上线
+                    if ONLINE_USERS_AVAILABLE and add_user_online:
+                        try:
+                            add_user_online(
+                                session_id=session_token,
+                                username=user['username'],
+                                page_path='/login'
+                            )
+                        except Exception as e:
+                            print(f"记录用户上线失败: {e}")
                     
                     st.success(f"✅ 登录成功！欢迎回来，{user['username']}")
                     st.rerun()
@@ -437,7 +477,7 @@ def show_login_page():
     
     # 处理注册
     if register_clicked:
-        st.session_state.show_register = True
+        st.session_state.show_register = True  # type: ignore
         st.rerun()
     
     # 显示默认账户信息
@@ -446,6 +486,7 @@ def show_login_page():
         **默认管理员账户：**
         - 用户名：admin
         - 密码：admin123
+        - 权限：可以提交功能建议和问题反馈，但不能查看
         
         **注意：** 首次使用建议修改默认密码
         """)
@@ -487,22 +528,22 @@ def show_register_page():
             if success:
                 st.success(f"✅ {message}")
                 st.info("🔑 请使用新账户登录")
-                st.session_state.show_register = False
+                st.session_state.show_register = False  # type: ignore
                 st.rerun()
             else:
                 st.error(f"❌ {message}")
     
     # 返回登录
     if back_clicked:
-        st.session_state.show_register = False
+        st.session_state.show_register = False  # type: ignore
         st.rerun()
 
 def show_user_info():
     """显示用户信息"""
     if 'user' in st.session_state:
-        user = st.session_state.user
+        user = st.session_state.user  # type: ignore
         
-        with st.sidebar:
+        with st.sidebar:  # type: ignore
             st.markdown("---")
             st.markdown("### 👤 用户信息")
             st.write(f"**用户名:** {user['username']}")
@@ -514,7 +555,15 @@ def show_user_info():
 def logout_user():
     """用户退出登录"""
     if 'session_token' in st.session_state:
-        invalidate_session(st.session_state.session_token)
+        session_token = st.session_state.session_token  # type: ignore
+        invalidate_session(session_token)
+        
+        # 移除在线用户记录
+        if ONLINE_USERS_AVAILABLE and remove_user_online:
+            try:
+                remove_user_online(session_token)
+            except Exception as e:
+                print(f"移除在线用户失败: {e}")
     
     # 清除session state
     for key in ['user', 'session_token', 'authenticated']:
@@ -526,12 +575,12 @@ def logout_user():
 def check_authentication() -> bool:
     """检查用户认证状态"""
     # 检查session state
-    if 'authenticated' in st.session_state and st.session_state.authenticated:
+    if 'authenticated' in st.session_state and st.session_state.authenticated:  # type: ignore
         # 验证session token
         if 'session_token' in st.session_state:
-            user = verify_session(st.session_state.session_token)
+            user = verify_session(st.session_state.session_token)  # type: ignore
             if user:
-                st.session_state.user = user
+                st.session_state.user = user  # type: ignore
                 return True
             else:
                 # session失效，清除状态
@@ -549,6 +598,33 @@ def require_authentication():
                 show_auth_page()
         return wrapper
     return decorator
+
+def get_user_role(username: str) -> str:
+    """获取用户角色
+    
+    返回值:
+    - 'super_admin': 超级管理员 (TongYuze)
+    - 'admin': 普通管理员 (admin 和其他用户)
+    """
+    if username == 'TongYuze':
+        return 'super_admin'
+    else:
+        return 'admin'
+
+def can_view_feedback(username: str) -> bool:
+    """检查用户是否可以查看功能建议和问题反馈的内容"""
+    return username == 'TongYuze'
+
+def can_submit_feedback(username: str) -> bool:
+    """检查用户是否可以提交功能建议和问题反馈"""
+    # 所有用户都可以提交
+    return True
+
+def get_current_user_role() -> str:
+    """获取当前登录用户的角色"""
+    if 'user' in st.session_state:
+        return get_user_role(st.session_state.user['username'])  # type: ignore
+    return 'admin'
 
 def show_auth_page():
     """显示认证页面"""
